@@ -1,0 +1,92 @@
+from astropy.io import fits
+import numpy as np
+import os
+import matplotlib.pyplot as plt
+import pandas as pd
+from natsort import natsorted  # Ensure natural sorting for filenames
+
+
+def measure_mean_adu(filepath, crop=True):
+    """Measure the mean ADU value of the FITS file's data."""
+    with fits.open(filepath) as hdul:
+        data = hdul[0].data.astype(float)
+        if crop:
+            # Crop to central 200x200 region
+            h, w = data.shape
+            data = data[h // 2 - 100:h // 2 + 100, w // 2 - 100:w // 2 + 100]
+        mean_adu = np.mean(data)
+    return mean_adu
+
+
+def get_exposure_time(filepath):
+    """Extract the exposure time from the FITS header."""
+    with fits.open(filepath) as hdul:
+        header = hdul[0].header
+        # List of keywords to check for exposure time
+        possible_keywords = ["EXPTIME", "EXPOSURE", "EXP_TIME", "EXPO", "EXPOSURE TIME"]
+
+        for key in possible_keywords:
+            if key in header:
+                return header[key]  # Return the first valid value found
+
+        # If none of the keywords are found
+        print(f"Warning: No exposure time found in {filepath}. Available keys: {list(header.keys())}")
+        return None  # Return None if no exposure time is found
+
+
+# Prompt for folder
+folder = input("Enter the path to the FITS files folder: ")
+
+# Check if the folder exists
+if not os.path.exists(folder):
+    print(f"Error: The folder '{folder}' does not exist. Please check the path.")
+    exit()
+
+# Collect exposure times and mean ADU values
+data_points = []
+for fname in natsorted(os.listdir(folder)):  # Natural sorting for filenames
+    if fname.lower().endswith(".fits") or fname.lower().endswith(
+            ".fit"):  # Check both .fits and .fit (case-insensitive)
+        path = os.path.join(folder, fname)
+        try:
+            exposure_time = get_exposure_time(path)  # Extract exposure time
+            if exposure_time is not None:
+                mean_adu = measure_mean_adu(path)  # Compute ADU
+                data_points.append((fname, float(exposure_time), mean_adu))  # Ensure exposure_time is float
+            else:
+                print(f"Warning: Skipping {fname} (no exposure time).")
+        except Exception as e:
+            print(f"Error processing {fname}: {e}")
+
+# Check if data points exist
+if not data_points:
+    print("No valid .fits files with exposure times found. Exiting.")
+    exit()
+
+# Sort data points by exposure time (2nd column in data_points)
+data_points.sort(key=lambda x: x[1])  # Sort by exposure time (index 1 in tuple)
+
+# Save data to CSV instead of Excel
+output_file = os.path.join(folder, "fits_analysis.csv")
+
+# Check if the file exists and prompt for overwrite
+if os.path.exists(output_file):
+    overwrite = input(f"The file '{output_file}' already exists. Overwrite? (y/N): ").strip().lower()
+    if overwrite != 'y':
+        print("Operation canceled.")
+        exit()
+
+# Save to CSV
+df = pd.DataFrame(data_points, columns=["Filename", "Exposure Time (s)", "Mean ADU"])
+df.to_csv(output_file, index=False)
+print(f"Data successfully saved to {output_file}")
+
+# Scatter plot
+exposure_times, mean_adus = zip(*[(x[1], x[2]) for x in data_points])  # Extract X and Y data
+plt.figure(figsize=(8, 6))
+plt.scatter(exposure_times, mean_adus, color='blue', alpha=0.7)
+plt.title('Mean ADU vs Exposure Time')
+plt.xlabel('Exposure Time (seconds)')
+plt.ylabel('Mean ADU Value')
+plt.grid(True)
+plt.show()
